@@ -249,6 +249,7 @@ h1 {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
   box-shadow: var(--shadow);
+  touch-action: pan-y;
 }
 
 .question-meta,
@@ -287,6 +288,74 @@ h1 {
   font-size: 1.32rem;
   line-height: 1.45;
   letter-spacing: 0;
+}
+
+.question-heading {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.question-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.question-title-row #questionText {
+  margin-bottom: 0;
+}
+
+.mini-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.84);
+  cursor: pointer;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.question-edit-dialog {
+  width: min(calc(100vw - 28px), 620px);
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  color: var(--ink);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.question-edit-dialog::backdrop {
+  background: rgba(22, 28, 36, 0.42);
+}
+
+.question-edit-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.question-edit-dialog textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: #fffdf8;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.question-editor-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .jump-control {
@@ -557,7 +626,7 @@ button:disabled {
           <button class="ghost-button" id="shuffleButton" type="button">随机</button>
         </section>
 
-        <section class="question-panel" aria-live="polite">
+        <section class="question-panel" id="questionPanel" aria-live="polite">
           <div class="question-meta">
             <span id="questionType">题目</span>
             <span id="questionPosition">0 / 0</span>
@@ -568,7 +637,12 @@ button:disabled {
           <div class="jump-control">
             <input id="questionSlider" type="range" min="0" max="0" value="0" aria-label="题目进度" disabled />
           </div>
-          <h2 id="questionText">正在读取题库...</h2>
+          <div class="question-heading">
+            <div class="question-title-row">
+              <h2 id="questionText">正在读取题库...</h2>
+              <button class="mini-button" id="editQuestionButton" type="button" hidden>修改题干</button>
+            </div>
+          </div>
           <div class="options" id="options"></div>
           <button class="primary-button submit-button" id="submitButton" type="button" hidden>
             提交答案
@@ -586,6 +660,22 @@ button:disabled {
         </section>
       </main>
     </div>
+
+    <dialog class="question-edit-dialog" id="questionEditDialog">
+      <form method="dialog">
+        <div class="dialog-header">
+          <h2>修改题干</h2>
+          <button class="icon-button" id="cancelQuestionEditButton" type="submit" aria-label="关闭">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <textarea id="questionEditorInput" aria-label="修改题干"></textarea>
+        <div class="question-editor-actions">
+          <button class="secondary-button" type="submit">取消</button>
+          <button class="primary-button" id="saveQuestionEditButton" type="button">保存题干</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog class="settings-dialog" id="settingsDialog">
       <form method="dialog">
@@ -23214,6 +23304,9 @@ const state = {
   mode: "all",
   index: 0,
   shuffled: false,
+  editingQuestionId: "",
+  autoNextTimer: 0,
+  touchStart: null,
 };
 
 const els = {
@@ -23226,7 +23319,13 @@ const els = {
   questionType: document.querySelector("#questionType"),
   questionPosition: document.querySelector("#questionPosition"),
   questionSlider: document.querySelector("#questionSlider"),
+  questionPanel: document.querySelector("#questionPanel"),
   questionText: document.querySelector("#questionText"),
+  editQuestionButton: document.querySelector("#editQuestionButton"),
+  questionEditDialog: document.querySelector("#questionEditDialog"),
+  questionEditorInput: document.querySelector("#questionEditorInput"),
+  cancelQuestionEditButton: document.querySelector("#cancelQuestionEditButton"),
+  saveQuestionEditButton: document.querySelector("#saveQuestionEditButton"),
   options: document.querySelector("#options"),
   submitButton: document.querySelector("#submitButton"),
   answerPanel: document.querySelector("#answerPanel"),
@@ -23708,6 +23807,7 @@ function getSubjectProgress(subjectId) {
   if (!store[subjectId]) {
     store[subjectId] = {
       questions: {},
+      questionEdits: {},
       positions: {},
       mode: "all",
       chapter: ALL_CHAPTER_ID,
@@ -23716,6 +23816,7 @@ function getSubjectProgress(subjectId) {
     saveJson(STORAGE_KEYS.progress, store);
   } else {
     store[subjectId].questions ||= {};
+    store[subjectId].questionEdits ||= {};
     store[subjectId].positions ||= {};
     store[subjectId].mode ||= "all";
     store[subjectId].chapter ||= ALL_CHAPTER_ID;
@@ -23723,6 +23824,14 @@ function getSubjectProgress(subjectId) {
     saveJson(STORAGE_KEYS.progress, store);
   }
   return store[subjectId];
+}
+
+function applyQuestionEdits(questions) {
+  const edits = state.subjectProgress?.questionEdits || {};
+  return questions.map((question) => ({
+    ...question,
+    question: edits[question.id] || question.question,
+  }));
 }
 
 function getQuestionProgress(questionId) {
@@ -23820,8 +23929,8 @@ function selectSubject(subjectId) {
   saveLibrary();
 
   const subject = currentSubject();
-  state.allQuestions = parseQuestions(subject.text);
   state.subjectProgress = getSubjectProgress(subjectId);
+  state.allQuestions = applyQuestionEdits(parseQuestions(subject.text));
   state.mode = state.subjectProgress.mode || "all";
   state.currentChapterId = validChapterId(state.subjectProgress.chapter || ALL_CHAPTER_ID);
   state.shuffled = Boolean(state.subjectProgress.shuffled);
@@ -23936,6 +24045,8 @@ function renderEmptyLibrary(message = "没有可用题库，请在设置中导�
   els.questionType.textContent = "暂无题库";
   els.questionPosition.textContent = "0 / 0";
   els.questionText.textContent = message;
+  els.editQuestionButton.hidden = true;
+  if (els.questionEditDialog.open) els.questionEditDialog.close();
   els.answerPanel.hidden = true;
   els.submitButton.hidden = true;
   els.progressBar.style.width = "0%";
@@ -23962,6 +24073,8 @@ function render() {
         : state.mode === "starred"
           ? "还没有收藏题，遇到重点题可以点收藏。"
           : "没有识别到题目。";
+    els.editQuestionButton.hidden = true;
+    if (els.questionEditDialog.open) els.questionEditDialog.close();
     els.answerPanel.hidden = true;
     els.submitButton.hidden = true;
     els.progressBar.style.width = "0%";
@@ -23981,6 +24094,12 @@ function render() {
   els.questionType.textContent = `${chapterLabel} · ${question.type}${multi ? " · 多选" : " · 单选"}`;
   els.questionPosition.textContent = `${state.index + 1} / ${state.visibleQuestions.length}`;
   els.questionText.textContent = question.question;
+  const editing = state.editingQuestionId === question.id;
+  els.editQuestionButton.hidden = false;
+  els.editQuestionButton.disabled = false;
+  if (editing && els.questionEditDialog.open && els.questionEditorInput.value !== question.question) {
+    els.questionEditorInput.value = question.question;
+  }
   els.progressBar.style.width = `${((state.index + 1) / state.visibleQuestions.length) * 100}%`;
   els.questionSlider.disabled = false;
   els.questionSlider.min = "1";
@@ -24061,6 +24180,7 @@ function handleOptionClick(question, key) {
 
   saveCurrentProgress();
   render();
+  if (!isMultiQuestion(question)) scheduleAutoNextIfCorrect(progress);
 }
 
 function submitCurrentAnswer() {
@@ -24072,6 +24192,22 @@ function submitCurrentAnswer() {
   progress.correct = isCorrectSelection(question, progress.selected);
   saveCurrentProgress();
   render();
+  scheduleAutoNextIfCorrect(progress);
+}
+
+function clearAutoNextTimer() {
+  if (!state.autoNextTimer) return;
+  window.clearTimeout(state.autoNextTimer);
+  state.autoNextTimer = 0;
+}
+
+function scheduleAutoNextIfCorrect(progress) {
+  clearAutoNextTimer();
+  if (!progress.correct || state.index >= state.visibleQuestions.length - 1) return;
+  state.autoNextTimer = window.setTimeout(() => {
+    state.autoNextTimer = 0;
+    goToQuestion(1);
+  }, 650);
 }
 
 function goToQuestion(delta) {
@@ -24079,9 +24215,52 @@ function goToQuestion(delta) {
 }
 
 function jumpToQuestion(index) {
+  clearAutoNextTimer();
+  state.editingQuestionId = "";
+  if (els.questionEditDialog.open) els.questionEditDialog.close();
   state.index = Math.max(0, Math.min(state.visibleQuestions.length - 1, index));
   render();
   savePosition();
+}
+
+function startQuestionEdit() {
+  const question = currentQuestion();
+  if (!question) return;
+  clearAutoNextTimer();
+  state.editingQuestionId = question.id;
+  els.questionEditorInput.value = question.question;
+  if (!els.questionEditDialog.open) els.questionEditDialog.showModal();
+  els.questionEditorInput.focus();
+}
+
+function cancelQuestionEdit() {
+  state.editingQuestionId = "";
+  if (els.questionEditDialog.open) els.questionEditDialog.close();
+}
+
+function saveQuestionEdit() {
+  const question = currentQuestion();
+  const subject = currentSubject();
+  if (!question || !subject) return;
+
+  const nextText = cleanLine(els.questionEditorInput.value);
+  if (!nextText) {
+    els.parseHint.textContent = "题干不能为空。";
+    return;
+  }
+
+  state.subjectProgress.questionEdits ||= {};
+  state.subjectProgress.questionEdits[question.id] = nextText;
+  saveCurrentProgress();
+  state.allQuestions = applyQuestionEdits(parseQuestions(subject.text));
+  state.editingQuestionId = "";
+  if (els.questionEditDialog.open) els.questionEditDialog.close();
+  rebuildVisibleQuestions({
+    preferredQuestionId: question.id,
+    fallbackIndex: state.index,
+    useSavedPosition: false,
+  });
+  els.parseHint.textContent = "题干已保存。";
 }
 
 function setChapter(chapterId) {
@@ -24161,6 +24340,12 @@ function bindEvents() {
   els.chapterSelect.addEventListener("change", (event) => setChapter(event.target.value));
   els.prevButton.addEventListener("click", () => goToQuestion(-1));
   els.nextButton.addEventListener("click", () => goToQuestion(1));
+  els.editQuestionButton.addEventListener("click", startQuestionEdit);
+  els.cancelQuestionEditButton.addEventListener("click", cancelQuestionEdit);
+  els.saveQuestionEditButton.addEventListener("click", saveQuestionEdit);
+  els.questionEditDialog.addEventListener("close", () => {
+    state.editingQuestionId = "";
+  });
   els.questionSlider.addEventListener("input", () => {
     jumpToQuestion(Number(els.questionSlider.value) - 1);
   });
@@ -24200,6 +24385,7 @@ function bindEvents() {
     if (!subject || !window.confirm(`确定清空“${subject.name}”的做题进度吗？`)) return;
     state.subjectProgress = {
       questions: {},
+      questionEdits: state.subjectProgress.questionEdits || {},
       positions: {},
       mode: state.mode,
       chapter: state.currentChapterId,
@@ -24250,6 +24436,34 @@ function bindEvents() {
       els.parseHint.textContent = error.message;
     } finally {
       els.fileInput.value = "";
+    }
+  });
+
+  els.questionPanel.addEventListener("pointerdown", (event) => {
+    if (state.editingQuestionId || !event.isPrimary) return;
+    state.touchStart = {
+      x: event.clientX,
+      y: event.clientY,
+      time: Date.now(),
+    };
+  });
+
+  els.questionPanel.addEventListener("pointerup", (event) => {
+    if (!state.touchStart || state.editingQuestionId || !event.isPrimary) {
+      state.touchStart = null;
+      return;
+    }
+
+    const dx = event.clientX - state.touchStart.x;
+    const dy = event.clientY - state.touchStart.y;
+    const elapsed = Date.now() - state.touchStart.time;
+    state.touchStart = null;
+
+    if (elapsed > 700 || Math.abs(dx) < 64 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+    if (dx < 0) {
+      goToQuestion(1);
+    } else {
+      goToQuestion(-1);
     }
   });
 }
