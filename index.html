@@ -352,6 +352,30 @@ h1 {
   line-height: 1.5;
 }
 
+.question-option-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.question-option-editor label {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.question-option-editor input {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: #fffdf8;
+}
+
 .question-editor-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -664,15 +688,19 @@ button:disabled {
     <dialog class="question-edit-dialog" id="questionEditDialog">
       <form method="dialog">
         <div class="dialog-header">
-          <h2>修改题干</h2>
+          <h2>修改题目</h2>
           <button class="icon-button" id="cancelQuestionEditButton" type="submit" aria-label="关闭">
             <span aria-hidden="true">×</span>
           </button>
         </div>
-        <textarea id="questionEditorInput" aria-label="修改题干"></textarea>
+        <label class="settings-field">
+          <span>题干</span>
+          <textarea id="questionEditorInput" aria-label="修改题干"></textarea>
+        </label>
+        <div class="question-option-editor" id="questionOptionEditor"></div>
         <div class="question-editor-actions">
           <button class="secondary-button" type="submit">取消</button>
-          <button class="primary-button" id="saveQuestionEditButton" type="button">保存题干</button>
+          <button class="primary-button" id="saveQuestionEditButton" type="button">保存修改</button>
         </div>
       </form>
     </dialog>
@@ -695,6 +723,8 @@ button:disabled {
         </label>
         <div class="dialog-actions">
           <button class="secondary-button" id="resetProgressButton" type="button">清空当前进度</button>
+          <button class="secondary-button" id="resetChapterProgressButton" type="button">清空当前章节</button>
+          <button class="secondary-button" id="exportModifiedButton" type="button">导出修改网页</button>
           <button class="secondary-button" id="loadDefaultButton" type="button">恢复内置学科</button>
           <button class="secondary-button" id="deleteSubjectButton" type="button">删除当前学科</button>
         </div>
@@ -23324,6 +23354,7 @@ const els = {
   editQuestionButton: document.querySelector("#editQuestionButton"),
   questionEditDialog: document.querySelector("#questionEditDialog"),
   questionEditorInput: document.querySelector("#questionEditorInput"),
+  questionOptionEditor: document.querySelector("#questionOptionEditor"),
   cancelQuestionEditButton: document.querySelector("#cancelQuestionEditButton"),
   saveQuestionEditButton: document.querySelector("#saveQuestionEditButton"),
   options: document.querySelector("#options"),
@@ -23341,6 +23372,8 @@ const els = {
   subjectNameInput: document.querySelector("#subjectNameInput"),
   fileInput: document.querySelector("#fileInput"),
   resetProgressButton: document.querySelector("#resetProgressButton"),
+  resetChapterProgressButton: document.querySelector("#resetChapterProgressButton"),
+  exportModifiedButton: document.querySelector("#exportModifiedButton"),
   loadDefaultButton: document.querySelector("#loadDefaultButton"),
   deleteSubjectButton: document.querySelector("#deleteSubjectButton"),
   parseHint: document.querySelector("#parseHint"),
@@ -23827,11 +23860,35 @@ function getSubjectProgress(subjectId) {
 }
 
 function applyQuestionEdits(questions) {
-  const edits = state.subjectProgress?.questionEdits || {};
+  return applyEditsToQuestions(questions, state.subjectProgress?.questionEdits || {});
+}
+
+function applyEditsToQuestions(questions, edits) {
   return questions.map((question) => ({
     ...question,
-    question: edits[question.id] || question.question,
+    question:
+      typeof edits[question.id] === "string"
+        ? edits[question.id]
+        : edits[question.id]?.question || question.question,
+    options: question.options.map((option) => ({
+      ...option,
+      text: edits[question.id]?.options?.[option.key] || option.text,
+    })),
   }));
+}
+
+function editedQuestionValue(questionId) {
+  const edit = state.subjectProgress?.questionEdits?.[questionId];
+  if (typeof edit === "string") {
+    return {
+      question: edit,
+      options: {},
+    };
+  }
+  return {
+    question: edit?.question || "",
+    options: edit?.options || {},
+  };
 }
 
 function getQuestionProgress(questionId) {
@@ -24094,12 +24151,8 @@ function render() {
   els.questionType.textContent = `${chapterLabel} · ${question.type}${multi ? " · 多选" : " · 单选"}`;
   els.questionPosition.textContent = `${state.index + 1} / ${state.visibleQuestions.length}`;
   els.questionText.textContent = question.question;
-  const editing = state.editingQuestionId === question.id;
   els.editQuestionButton.hidden = false;
   els.editQuestionButton.disabled = false;
-  if (editing && els.questionEditDialog.open && els.questionEditorInput.value !== question.question) {
-    els.questionEditorInput.value = question.question;
-  }
   els.progressBar.style.width = `${((state.index + 1) / state.visibleQuestions.length) * 100}%`;
   els.questionSlider.disabled = false;
   els.questionSlider.min = "1";
@@ -24228,9 +24281,30 @@ function startQuestionEdit() {
   if (!question) return;
   clearAutoNextTimer();
   state.editingQuestionId = question.id;
-  els.questionEditorInput.value = question.question;
+  renderQuestionEditFields(question);
   if (!els.questionEditDialog.open) els.questionEditDialog.showModal();
   els.questionEditorInput.focus();
+}
+
+function renderQuestionEditFields(question) {
+  const edit = editedQuestionValue(question.id);
+  els.questionEditorInput.value = edit.question || question.question;
+  els.questionOptionEditor.innerHTML = "";
+
+  question.options.forEach((option) => {
+    const label = document.createElement("label");
+    const key = document.createElement("span");
+    const input = document.createElement("input");
+
+    key.textContent = option.key;
+    input.type = "text";
+    input.value = edit.options[option.key] || option.text;
+    input.dataset.optionKey = option.key;
+    input.setAttribute("aria-label", `修改选项 ${option.key}`);
+
+    label.append(key, input);
+    els.questionOptionEditor.appendChild(label);
+  });
 }
 
 function cancelQuestionEdit() {
@@ -24243,14 +24317,27 @@ function saveQuestionEdit() {
   const subject = currentSubject();
   if (!question || !subject) return;
 
-  const nextText = cleanLine(els.questionEditorInput.value);
-  if (!nextText) {
+  const nextQuestionText = cleanLine(els.questionEditorInput.value);
+  if (!nextQuestionText) {
     els.parseHint.textContent = "题干不能为空。";
     return;
   }
 
+  const nextOptions = {};
+  for (const input of Array.from(els.questionOptionEditor.querySelectorAll("input[data-option-key]"))) {
+    const optionText = cleanLine(input.value);
+    if (!optionText) {
+      els.parseHint.textContent = `选项 ${input.dataset.optionKey} 不能为空。`;
+      return;
+    }
+    nextOptions[input.dataset.optionKey] = optionText;
+  }
+
   state.subjectProgress.questionEdits ||= {};
-  state.subjectProgress.questionEdits[question.id] = nextText;
+  state.subjectProgress.questionEdits[question.id] = {
+    question: nextQuestionText,
+    options: nextOptions,
+  };
   saveCurrentProgress();
   state.allQuestions = applyQuestionEdits(parseQuestions(subject.text));
   state.editingQuestionId = "";
@@ -24260,7 +24347,112 @@ function saveQuestionEdit() {
     fallbackIndex: state.index,
     useSavedPosition: false,
   });
-  els.parseHint.textContent = "题干已保存。";
+  els.parseHint.textContent = "题目和选项已保存。";
+}
+
+function serializeQuestionBank(questions) {
+  const lines = [];
+  let lastChapter = "";
+  let lastType = "";
+
+  questions.forEach((question, index) => {
+    const chapter = question.chapter || DEFAULT_CHAPTER_NAME;
+    if (chapter !== lastChapter) {
+      if (lines.length) lines.push("");
+      lines.push(`[章节] ${chapter}`);
+      lastChapter = chapter;
+      lastType = "";
+    }
+
+    if (question.type !== lastType) {
+      lines.push(`[${question.type}]`);
+      lastType = question.type;
+    }
+
+    const number = Number.isFinite(question.number) ? question.number : index + 1;
+    lines.push(`[题目] ${number}. ${question.question}`);
+    question.options.forEach((option) => {
+      lines.push(`${option.key}. ${option.text}`);
+    });
+    lines.push(`[答案] ${question.answer}`);
+    lines.push(`[解析] ${question.explanation || ""}`);
+  });
+
+  return lines.join("\n");
+}
+
+function editedSubjectText(subjectId, subject, progressStore) {
+  const edits = progressStore[subjectId]?.questionEdits || {};
+  return serializeQuestionBank(applyEditsToQuestions(parseQuestions(subject.text), edits));
+}
+
+function exportModifiedHtml() {
+  const subjects = subjectList();
+  if (!subjects.length) {
+    els.parseHint.textContent = "没有可导出的题库。";
+    return;
+  }
+
+  const progressStore = loadProgressStore();
+  const clone = document.documentElement.cloneNode(true);
+  clone.querySelectorAll("dialog[open]").forEach((dialog) => dialog.removeAttribute("open"));
+  clone.querySelectorAll(EMBEDDED_BANK_SELECTOR).forEach((node) => node.remove());
+
+  const appScript = Array.from(clone.querySelectorAll("script")).find((script) =>
+    script.textContent.includes("const EMBEDDED_BANK_SELECTOR"),
+  );
+  if (!appScript) {
+    els.parseHint.textContent = "导出失败：没有找到网页脚本。";
+    return;
+  }
+
+  subjects.forEach((subject) => {
+    const script = document.createElement("script");
+    script.className = EMBEDDED_BANK_SELECTOR.slice(1);
+    script.dataset.subjectId = subject.id;
+    script.dataset.subjectName = subject.name;
+    script.dataset.sourceName = subject.sourceName || `${subject.name}.txt`;
+    script.type = "text/plain";
+    script.textContent = `\n${editedSubjectText(subject.id, subject, progressStore)}\n`;
+    appScript.parentNode.insertBefore(script, appScript);
+  });
+
+  const html = `<!doctype html>\n${clone.outerHTML}`;
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 10);
+  link.href = URL.createObjectURL(blob);
+  link.download = `shuati-${stamp}.html`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  els.parseHint.textContent = "已导出修改后的网页，可上传到 GitHub。";
+}
+
+function resetCurrentChapterProgress() {
+  const subject = currentSubject();
+  if (!subject || !state.subjectProgress) return;
+
+  const chapter = selectedChapter();
+  const label = chapter ? `章节“${chapter.name}”` : "全部章节";
+  if (!window.confirm(`确定清空${label}的做题记录吗？收藏和题目修改会保留。`)) return;
+
+  currentChapterQuestions().forEach((question) => {
+    const progress = state.subjectProgress.questions[question.id];
+    if (!progress) return;
+    state.subjectProgress.questions[question.id] = {
+      selected: [],
+      answered: false,
+      correct: false,
+      starred: Boolean(progress.starred),
+    };
+  });
+
+  delete state.subjectProgress.positions[positionKey()];
+  saveCurrentProgress();
+  rebuildVisibleQuestions({ fallbackIndex: 0, useSavedPosition: false });
+  els.parseHint.textContent = `${label}的做题记录已清空。`;
 }
 
 function setChapter(chapterId) {
@@ -24395,6 +24587,8 @@ function bindEvents() {
     rebuildVisibleQuestions({ fallbackIndex: 0, useSavedPosition: false });
     els.parseHint.textContent = `${subject.name} 的进度已清空。`;
   });
+  els.resetChapterProgressButton.addEventListener("click", resetCurrentChapterProgress);
+  els.exportModifiedButton.addEventListener("click", exportModifiedHtml);
   els.loadDefaultButton.addEventListener("click", () => {
     installEmbeddedSubjects(true);
     if (!state.currentSubjectId || !state.subjects[state.currentSubjectId]) {
