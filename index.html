@@ -172,9 +172,9 @@ h1 {
 
 .mode-tabs {
   display: inline-grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
-  width: min(100%, 320px);
+  width: min(100%, 390px);
   padding: 4px;
   border: 1px solid rgba(31, 41, 51, 0.08);
   border-radius: 8px;
@@ -644,6 +644,7 @@ button:disabled {
         <section class="toolbar" aria-label="刷题控制">
           <div class="mode-tabs" role="tablist" aria-label="刷题模式">
             <button class="mode-tab is-active" type="button" data-mode="all">全部</button>
+            <button class="mode-tab" type="button" data-mode="memorize">背题</button>
             <button class="mode-tab" type="button" data-mode="wrong">错题</button>
             <button class="mode-tab" type="button" data-mode="starred">收藏</button>
           </div>
@@ -661,12 +662,7 @@ button:disabled {
           <div class="jump-control">
             <input id="questionSlider" type="range" min="0" max="0" value="0" aria-label="题目进度" disabled />
           </div>
-          <div class="question-heading">
-            <div class="question-title-row">
-              <h2 id="questionText">正在读取题库...</h2>
-              <button class="mini-button" id="editQuestionButton" type="button" hidden>修改题干</button>
-            </div>
-          </div>
+          <h2 id="questionText">正在读取题库...</h2>
           <div class="options" id="options"></div>
           <button class="primary-button submit-button" id="submitButton" type="button" hidden>
             提交答案
@@ -684,26 +680,6 @@ button:disabled {
         </section>
       </main>
     </div>
-
-    <dialog class="question-edit-dialog" id="questionEditDialog">
-      <form method="dialog">
-        <div class="dialog-header">
-          <h2>修改题目</h2>
-          <button class="icon-button" id="cancelQuestionEditButton" type="submit" aria-label="关闭">
-            <span aria-hidden="true">×</span>
-          </button>
-        </div>
-        <label class="settings-field">
-          <span>题干</span>
-          <textarea id="questionEditorInput" aria-label="修改题干"></textarea>
-        </label>
-        <div class="question-option-editor" id="questionOptionEditor"></div>
-        <div class="question-editor-actions">
-          <button class="secondary-button" type="submit">取消</button>
-          <button class="primary-button" id="saveQuestionEditButton" type="button">保存修改</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog class="settings-dialog" id="settingsDialog">
       <form method="dialog">
@@ -30544,7 +30520,6 @@ const state = {
   mode: "all",
   index: 0,
   shuffled: false,
-  editingQuestionId: "",
   autoNextTimer: 0,
   touchStart: null,
 };
@@ -30561,12 +30536,6 @@ const els = {
   questionSlider: document.querySelector("#questionSlider"),
   questionPanel: document.querySelector("#questionPanel"),
   questionText: document.querySelector("#questionText"),
-  editQuestionButton: document.querySelector("#editQuestionButton"),
-  questionEditDialog: document.querySelector("#questionEditDialog"),
-  questionEditorInput: document.querySelector("#questionEditorInput"),
-  questionOptionEditor: document.querySelector("#questionOptionEditor"),
-  cancelQuestionEditButton: document.querySelector("#cancelQuestionEditButton"),
-  saveQuestionEditButton: document.querySelector("#saveQuestionEditButton"),
   options: document.querySelector("#options"),
   submitButton: document.querySelector("#submitButton"),
   answerPanel: document.querySelector("#answerPanel"),
@@ -31312,8 +31281,6 @@ function renderEmptyLibrary(message = "没有可用题库，请在设置中导�
   els.questionType.textContent = "暂无题库";
   els.questionPosition.textContent = "0 / 0";
   els.questionText.textContent = message;
-  els.editQuestionButton.hidden = true;
-  if (els.questionEditDialog.open) els.questionEditDialog.close();
   els.answerPanel.hidden = true;
   els.submitButton.hidden = true;
   els.progressBar.style.width = "0%";
@@ -31340,8 +31307,6 @@ function render() {
         : state.mode === "starred"
           ? "还没有收藏题，遇到重点题可以点收藏。"
           : "没有识别到题目。";
-    els.editQuestionButton.hidden = true;
-    if (els.questionEditDialog.open) els.questionEditDialog.close();
     els.answerPanel.hidden = true;
     els.submitButton.hidden = true;
     els.progressBar.style.width = "0%";
@@ -31357,12 +31322,12 @@ function render() {
 
   const progress = getQuestionProgress(question.id);
   const multi = isMultiQuestion(question);
+  const memorize = state.mode === "memorize";
+  const revealAnswer = progress.answered || memorize;
   const chapterLabel = question.chapter || DEFAULT_CHAPTER_NAME;
-  els.questionType.textContent = `${chapterLabel} · ${question.type}${multi ? " · 多选" : " · 单选"}`;
+  els.questionType.textContent = `${chapterLabel} · ${question.type}${multi ? " · 多选" : " · 单选"}${memorize ? " · 背题" : ""}`;
   els.questionPosition.textContent = `${state.index + 1} / ${state.visibleQuestions.length}`;
   els.questionText.textContent = question.question;
-  els.editQuestionButton.hidden = false;
-  els.editQuestionButton.disabled = false;
   els.progressBar.style.width = `${((state.index + 1) / state.visibleQuestions.length) * 100}%`;
   els.questionSlider.disabled = false;
   els.questionSlider.min = "1";
@@ -31372,7 +31337,7 @@ function render() {
   els.nextButton.disabled = state.index >= state.visibleQuestions.length - 1;
   els.starButton.disabled = false;
   els.starButton.textContent = progress.starred ? "已收藏" : "收藏";
-  els.submitButton.hidden = !multi || progress.answered;
+  els.submitButton.hidden = memorize || !multi || progress.answered;
   els.submitButton.disabled = progress.selected.length === 0;
 
   question.options.forEach((option) => {
@@ -31383,13 +31348,13 @@ function render() {
     key.textContent = option.key;
     text.textContent = option.text;
     button.dataset.key = option.key;
-    button.disabled = progress.answered;
+    button.disabled = revealAnswer;
 
     if (progress.selected.includes(option.key)) {
       button.classList.add("is-selected");
     }
 
-    if (progress.answered) {
+    if (revealAnswer) {
       if (question.answer.includes(option.key)) {
         button.classList.add("is-correct");
       } else if (progress.selected.includes(option.key)) {
@@ -31401,9 +31366,11 @@ function render() {
     els.options.appendChild(fragment);
   });
 
-  if (progress.answered) {
+  if (revealAnswer) {
     els.answerPanel.hidden = false;
-    els.answerLine.textContent = `${progress.correct ? "回答正确" : "回答错误"} · 答案 ${question.answer}`;
+    els.answerLine.textContent = memorize && !progress.answered
+      ? `背题模式 · 答案 ${question.answer}`
+      : `${progress.correct ? "回答正确" : "回答错误"} · 答案 ${question.answer}`;
     els.explanation.textContent = question.explanation || "这道题没有解析。";
   } else {
     els.answerPanel.hidden = true;
@@ -31479,85 +31446,9 @@ function goToQuestion(delta) {
 
 function jumpToQuestion(index) {
   clearAutoNextTimer();
-  state.editingQuestionId = "";
-  if (els.questionEditDialog.open) els.questionEditDialog.close();
   state.index = Math.max(0, Math.min(state.visibleQuestions.length - 1, index));
   render();
   savePosition();
-}
-
-function startQuestionEdit() {
-  const question = currentQuestion();
-  if (!question) return;
-  clearAutoNextTimer();
-  state.editingQuestionId = question.id;
-  renderQuestionEditFields(question);
-  if (!els.questionEditDialog.open) els.questionEditDialog.showModal();
-  els.questionEditorInput.focus();
-}
-
-function renderQuestionEditFields(question) {
-  const edit = editedQuestionValue(question.id);
-  els.questionEditorInput.value = edit.question || question.question;
-  els.questionOptionEditor.innerHTML = "";
-
-  question.options.forEach((option) => {
-    const label = document.createElement("label");
-    const key = document.createElement("span");
-    const input = document.createElement("input");
-
-    key.textContent = option.key;
-    input.type = "text";
-    input.value = edit.options[option.key] || option.text;
-    input.dataset.optionKey = option.key;
-    input.setAttribute("aria-label", `修改选项 ${option.key}`);
-
-    label.append(key, input);
-    els.questionOptionEditor.appendChild(label);
-  });
-}
-
-function cancelQuestionEdit() {
-  state.editingQuestionId = "";
-  if (els.questionEditDialog.open) els.questionEditDialog.close();
-}
-
-function saveQuestionEdit() {
-  const question = currentQuestion();
-  const subject = currentSubject();
-  if (!question || !subject) return;
-
-  const nextQuestionText = cleanLine(els.questionEditorInput.value);
-  if (!nextQuestionText) {
-    els.parseHint.textContent = "题干不能为空。";
-    return;
-  }
-
-  const nextOptions = {};
-  for (const input of Array.from(els.questionOptionEditor.querySelectorAll("input[data-option-key]"))) {
-    const optionText = cleanLine(input.value);
-    if (!optionText) {
-      els.parseHint.textContent = `选项 ${input.dataset.optionKey} 不能为空。`;
-      return;
-    }
-    nextOptions[input.dataset.optionKey] = optionText;
-  }
-
-  state.subjectProgress.questionEdits ||= {};
-  state.subjectProgress.questionEdits[question.id] = {
-    question: nextQuestionText,
-    options: nextOptions,
-  };
-  saveCurrentProgress();
-  state.allQuestions = applyQuestionEdits(parseQuestions(subject.text));
-  state.editingQuestionId = "";
-  if (els.questionEditDialog.open) els.questionEditDialog.close();
-  rebuildVisibleQuestions({
-    preferredQuestionId: question.id,
-    fallbackIndex: state.index,
-    useSavedPosition: false,
-  });
-  els.parseHint.textContent = "题目和选项已保存。";
 }
 
 function serializeQuestionBank(questions) {
@@ -31742,12 +31633,6 @@ function bindEvents() {
   els.chapterSelect.addEventListener("change", (event) => setChapter(event.target.value));
   els.prevButton.addEventListener("click", () => goToQuestion(-1));
   els.nextButton.addEventListener("click", () => goToQuestion(1));
-  els.editQuestionButton.addEventListener("click", startQuestionEdit);
-  els.cancelQuestionEditButton.addEventListener("click", cancelQuestionEdit);
-  els.saveQuestionEditButton.addEventListener("click", saveQuestionEdit);
-  els.questionEditDialog.addEventListener("close", () => {
-    state.editingQuestionId = "";
-  });
   els.questionSlider.addEventListener("input", () => {
     jumpToQuestion(Number(els.questionSlider.value) - 1);
   });
@@ -31844,7 +31729,7 @@ function bindEvents() {
   });
 
   els.questionPanel.addEventListener("pointerdown", (event) => {
-    if (state.editingQuestionId || !event.isPrimary) return;
+    if (!event.isPrimary) return;
     state.touchStart = {
       x: event.clientX,
       y: event.clientY,
@@ -31853,7 +31738,7 @@ function bindEvents() {
   });
 
   els.questionPanel.addEventListener("pointerup", (event) => {
-    if (!state.touchStart || state.editingQuestionId || !event.isPrimary) {
+    if (!state.touchStart || !event.isPrimary) {
       state.touchStart = null;
       return;
     }
