@@ -242,6 +242,62 @@ h1 {
   line-height: 1;
 }
 
+.answer-card-dialog {
+  width: min(calc(100vw - 28px), 720px);
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  color: var(--ink);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.answer-card-dialog::backdrop {
+  background: rgba(22, 28, 36, 0.42);
+}
+
+.answer-card-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.answer-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+  gap: 8px;
+  max-height: min(62vh, 520px);
+  overflow: auto;
+}
+
+.answer-card-item {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #ffffff;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.answer-card-item.is-current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(31, 122, 104, 0.14);
+}
+
+.answer-card-item.is-correct {
+  border-color: rgba(39, 118, 74, 0.7);
+  color: #17603a;
+  background: #e9f6ec;
+}
+
+.answer-card-item.is-wrong {
+  border-color: rgba(190, 59, 69, 0.68);
+  color: #9d2f2f;
+  background: #fbebed;
+}
+
 .question-panel {
   padding: 18px;
   border: 1px solid rgba(31, 41, 51, 0.08);
@@ -1321,7 +1377,9 @@ xm-select[size='mini'] .item--divided {
             <button class="mode-tab" type="button" data-mode="wrong">错题</button>
             <button class="mode-tab" type="button" data-mode="starred">收藏</button>
           </div>
-          <button class="ghost-button" id="shuffleButton" type="button">随机</button>
+          <button class="icon-button" id="answerCardButton" type="button" aria-label="答题卡">
+            <span aria-hidden="true">📄</span>
+          </button>
         </section>
 
         <section class="question-panel" id="questionPanel" aria-live="polite">
@@ -1405,6 +1463,18 @@ xm-select[size='mini'] .item--divided {
           <button class="secondary-button" id="deleteSubjectButton" type="button">删除当前学科</button>
         </div>
         <p class="hint" id="parseHint">已导出修改后的网页，可上传到 GitHub。</p>
+      </form>
+    </dialog>
+
+    <dialog class="answer-card-dialog" id="answerCardDialog">
+      <form method="dialog">
+        <div class="dialog-header">
+          <h2>答题卡</h2>
+          <button class="icon-button" type="submit" aria-label="关闭">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <div class="answer-card-grid" id="answerCardGrid" aria-label="题号列表"></div>
       </form>
     </dialog>
 
@@ -31366,7 +31436,9 @@ const els = {
   prevButton: document.querySelector("#prevButton"),
   nextButton: document.querySelector("#nextButton"),
   starButton: document.querySelector("#starButton"),
-  shuffleButton: document.querySelector("#shuffleButton"),
+  answerCardButton: document.querySelector("#answerCardButton"),
+  answerCardDialog: document.querySelector("#answerCardDialog"),
+  answerCardGrid: document.querySelector("#answerCardGrid"),
   settingsButton: document.querySelector("#settingsButton"),
   settingsDialog: document.querySelector("#settingsDialog"),
   subjectNameInput: document.querySelector("#subjectNameInput"),
@@ -32075,14 +32147,14 @@ function selectSubject(subjectId) {
   state.allQuestions = applyQuestionEdits(parseQuestions(subject.text));
   state.mode = state.subjectProgress.mode || "all";
   state.currentChapterId = validChapterId(state.subjectProgress.chapter || ALL_CHAPTER_ID);
-  state.shuffled = Boolean(state.subjectProgress.shuffled);
+  state.shuffled = false;
   state.index = 0;
 
   renderSubjectSelect();
   renderChapterSelect();
   updateTitle();
   updateModeTabs();
-  updateShuffleButton();
+  updateAnswerCardButton();
   rebuildVisibleQuestions({ useSavedPosition: true });
   const chapters = chapterList();
   els.parseHint.textContent = `${subject.name}：${subject.questionCount} 题，${chapters.length} 章`;
@@ -32197,6 +32269,32 @@ function renderEmptyLibrary(message = "没有可用题库，请在设置中导�
   els.prevButton.disabled = true;
   els.nextButton.disabled = true;
   els.starButton.disabled = true;
+  els.answerCardButton.disabled = true;
+}
+
+function answerCardState(question) {
+  const progress = state.subjectProgress?.questions?.[question.id];
+  if (!isQuestionAnswered(question, progress)) return "pending";
+  return isQuestionCorrect(question, progress) ? "correct" : "wrong";
+}
+
+function renderAnswerCard() {
+  els.answerCardGrid.innerHTML = "";
+  state.visibleQuestions.forEach((question, index) => {
+    const button = document.createElement("button");
+    const status = answerCardState(question);
+    button.className = "answer-card-item";
+    button.type = "button";
+    button.textContent = String(index + 1);
+    button.classList.toggle("is-current", index === state.index);
+    button.classList.toggle("is-correct", status === "correct");
+    button.classList.toggle("is-wrong", status === "wrong");
+    button.addEventListener("click", () => {
+      els.answerCardDialog.close();
+      jumpToQuestion(index);
+    });
+    els.answerCardGrid.appendChild(button);
+  });
 }
 
 function renderBlankQuestionText(question, progress, memorize) {
@@ -32267,6 +32365,7 @@ function renderBlankChoiceQuestion(question, progress, memorize) {
   els.nextButton.disabled = state.index >= state.visibleQuestions.length - 1;
   els.starButton.disabled = false;
   els.starButton.textContent = progress.starred ? "已收藏" : "收藏";
+  els.answerCardButton.disabled = false;
   els.submitButton.hidden = true;
 
   if (!activeBlank) {
@@ -32337,6 +32436,7 @@ function render() {
     els.prevButton.disabled = true;
     els.nextButton.disabled = true;
     els.starButton.disabled = true;
+    els.answerCardButton.disabled = true;
     return;
   }
 
@@ -32362,6 +32462,7 @@ function render() {
   els.nextButton.disabled = state.index >= state.visibleQuestions.length - 1;
   els.starButton.disabled = false;
   els.starButton.textContent = progress.starred ? "已收藏" : "收藏";
+  els.answerCardButton.disabled = false;
   els.submitButton.hidden = memorize || !multi || progress.answered;
   els.submitButton.disabled = progress.selected.length === 0;
 
@@ -32662,8 +32763,8 @@ function updateModeTabs() {
   });
 }
 
-function updateShuffleButton() {
-  els.shuffleButton.textContent = state.shuffled ? "顺序" : "随机";
+function updateAnswerCardButton() {
+  els.answerCardButton.disabled = state.visibleQuestions.length === 0;
 }
 
 function importSubject(text, sourceName, requestedName) {
@@ -32730,16 +32831,9 @@ function bindEvents() {
       useSavedPosition: false,
     });
   });
-  els.shuffleButton.addEventListener("click", () => {
-    const keepId = currentQuestion()?.id;
-    state.shuffled = !state.shuffled;
-    state.subjectProgress.shuffled = state.shuffled;
-    updateShuffleButton();
-    rebuildVisibleQuestions({
-      preferredQuestionId: keepId,
-      fallbackIndex: state.index,
-      useSavedPosition: false,
-    });
+  els.answerCardButton.addEventListener("click", () => {
+    renderAnswerCard();
+    els.answerCardDialog.showModal();
   });
   els.modeTabs.forEach((button) => {
     button.addEventListener("click", () => setMode(button.dataset.mode));
