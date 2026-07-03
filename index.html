@@ -171,7 +171,7 @@ h1 {
 
 .mode-tabs {
   display: inline-grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   width: min(100%, 390px);
   padding: 4px;
@@ -1376,6 +1376,7 @@ xm-select[size='mini'] .item--divided {
             <button class="mode-tab" type="button" data-mode="memorize">背题</button>
             <button class="mode-tab" type="button" data-mode="wrong">错题</button>
             <button class="mode-tab" type="button" data-mode="starred">收藏</button>
+            <button class="mode-tab" type="button" data-mode="slashed">斩题库</button>
           </div>
           <button class="icon-button" id="answerCardButton" type="button" aria-label="答题卡">
             <span aria-hidden="true">📄</span>
@@ -1434,6 +1435,7 @@ xm-select[size='mini'] .item--divided {
         <section class="bottom-actions" aria-label="题目操作">
           <button class="secondary-button" id="prevButton" type="button">上一题</button>
           <button class="secondary-button" id="starButton" type="button">收藏</button>
+          <button class="secondary-button" id="slashButton" type="button">斩题</button>
           <button class="primary-button" id="nextButton" type="button">下一题</button>
         </section>
       </main>
@@ -41920,6 +41922,7 @@ const els = {
   prevButton: document.querySelector("#prevButton"),
   nextButton: document.querySelector("#nextButton"),
   starButton: document.querySelector("#starButton"),
+  slashButton: document.querySelector("#slashButton"),
   answerCardButton: document.querySelector("#answerCardButton"),
   answerCardDialog: document.querySelector("#answerCardDialog"),
   answerCardGrid: document.querySelector("#answerCardGrid"),
@@ -42518,6 +42521,7 @@ function getQuestionProgress(questionId) {
       answered: false,
       correct: false,
       starred: false,
+      slashed: false,
     };
   }
   return state.subjectProgress.questions[questionId];
@@ -42573,6 +42577,10 @@ function isQuestionAnswered(question, progress) {
 function isQuestionCorrect(question, progress) {
   if (!progress) return false;
   return isBlankChoiceQuestion(question) ? Boolean(ensureBlankProgress(question, progress).correct) : progress.correct;
+}
+
+function isQuestionSlashed(question) {
+  return Boolean(state.subjectProgress?.questions?.[question.id]?.slashed);
 }
 
 function subjectList() {
@@ -42663,6 +42671,11 @@ function rebuildVisibleQuestions({
   useSavedPosition = false,
 } = {}) {
   let questions = currentChapterQuestions();
+  if (state.mode === "slashed") {
+    questions = questions.filter((question) => isQuestionSlashed(question));
+  } else {
+    questions = questions.filter((question) => !isQuestionSlashed(question));
+  }
   if (state.mode === "wrong") {
     questions = questions.filter((question) => {
       const progress = state.subjectProgress.questions[question.id];
@@ -42766,6 +42779,7 @@ function renderEmptyLibrary(message = "没有可用题库，请在设置中导�
   els.prevButton.disabled = true;
   els.nextButton.disabled = true;
   els.starButton.disabled = true;
+  els.slashButton.disabled = true;
   els.answerCardButton.disabled = true;
 }
 
@@ -42862,6 +42876,8 @@ function renderBlankChoiceQuestion(question, progress, memorize) {
   els.nextButton.disabled = state.index >= state.visibleQuestions.length - 1;
   els.starButton.disabled = false;
   els.starButton.textContent = progress.starred ? "已收藏" : "收藏";
+  els.slashButton.disabled = false;
+  els.slashButton.textContent = progress.slashed ? "已斩" : "斩题";
   els.answerCardButton.disabled = false;
   els.submitButton.hidden = true;
 
@@ -42922,6 +42938,8 @@ function render() {
         ? "还没有错题，回到全部继续刷。"
         : state.mode === "starred"
           ? "还没有收藏题，遇到重点题可以点收藏。"
+          : state.mode === "slashed"
+            ? "斩题库还是空的，刷题时点击斩题后会移到这里。"
           : "没有识别到题目。";
     els.answerPanel.hidden = true;
     els.submitButton.hidden = true;
@@ -42933,6 +42951,7 @@ function render() {
     els.prevButton.disabled = true;
     els.nextButton.disabled = true;
     els.starButton.disabled = true;
+    els.slashButton.disabled = true;
     els.answerCardButton.disabled = true;
     return;
   }
@@ -42959,6 +42978,8 @@ function render() {
   els.nextButton.disabled = state.index >= state.visibleQuestions.length - 1;
   els.starButton.disabled = false;
   els.starButton.textContent = progress.starred ? "已收藏" : "收藏";
+  els.slashButton.disabled = false;
+  els.slashButton.textContent = progress.slashed ? "已斩" : "斩题";
   els.answerCardButton.disabled = false;
   els.submitButton.hidden = memorize || !multi || progress.answered;
   els.submitButton.disabled = progress.selected.length === 0;
@@ -43003,7 +43024,9 @@ function render() {
 }
 
 function renderStats() {
-  const scopedQuestions = currentChapterQuestions();
+  const scopedQuestions = currentChapterQuestions().filter((question) =>
+    state.mode === "slashed" ? isQuestionSlashed(question) : !isQuestionSlashed(question),
+  );
   const total = scopedQuestions.length;
   const progressList = Object.entries(state.subjectProgress?.questions || {}).filter(([id]) =>
     scopedQuestions.some((question) => question.id === id),
@@ -43213,6 +43236,7 @@ function resetCurrentChapterProgress() {
       answered: false,
       correct: false,
       starred: Boolean(progress.starred),
+      slashed: Boolean(progress.slashed),
       blankSelections: {},
       activeBlankId: "",
     };
@@ -43230,6 +43254,7 @@ function clearedQuestionProgress(progress) {
     answered: false,
     correct: false,
     starred: Boolean(progress?.starred),
+    slashed: Boolean(progress?.slashed),
     blankSelections: {},
     activeBlankId: "",
   };
@@ -43328,6 +43353,22 @@ function bindEvents() {
       useSavedPosition: false,
     });
   });
+  els.slashButton.addEventListener("click", () => {
+    const question = currentQuestion();
+    if (!question) return;
+    const progress = getQuestionProgress(question.id);
+    if (progress.slashed) {
+      if (!window.confirm("确定将这道题移回题库吗？")) return;
+      progress.slashed = false;
+    } else {
+      progress.slashed = true;
+    }
+    saveCurrentProgress();
+    rebuildVisibleQuestions({
+      fallbackIndex: state.index,
+      useSavedPosition: false,
+    });
+  });
   els.answerCardButton.addEventListener("click", () => {
     renderAnswerCard();
     els.answerCardDialog.showModal();
@@ -43341,14 +43382,14 @@ function bindEvents() {
   });
   els.resetProgressButton.addEventListener("click", () => {
     const subject = currentSubject();
-    if (!subject || !window.confirm(`确定清空“${subject.name}”的做题记录吗？收藏和题目修改会保留。`)) return;
-    const starredQuestions = Object.fromEntries(
+    if (!subject || !window.confirm(`确定清空“${subject.name}”的做题记录吗？收藏、斩题和题目修改会保留。`)) return;
+    const keptQuestions = Object.fromEntries(
       Object.entries(state.subjectProgress.questions || {})
-        .filter(([, progress]) => progress?.starred)
+        .filter(([, progress]) => progress?.starred || progress?.slashed)
         .map(([questionId, progress]) => [questionId, clearedQuestionProgress(progress)]),
     );
     state.subjectProgress = {
-      questions: starredQuestions,
+      questions: keptQuestions,
       questionEdits: state.subjectProgress.questionEdits || {},
       positions: {},
       mode: state.mode,
